@@ -98,13 +98,32 @@ contract Voting {
         require(workflowstatus == WorkflowStatus.VotingSessionStarted, "Voting session is not open");
         require(!voters[msg.sender].hasVoted, "You already voted");
         require(_proposalId < proposals.length, "This proposal doesn't exists");
-        
+
         voters[msg.sender].hasVoted = true;
         voters[msg.sender].votedProposalId = _proposalId;
         emit Voted(msg.sender, _proposalId);
     }
 
-    function getWinner() public view returns (uint) {
+    // Count votes
+
+    function tallyVotes() external {
+        require(msg.sender == owner, "You don't have the permission to do that");
+        require(workflowstatus == WorkflowStatus.VotingSessionEnded, "Vote session is not closed");
+
+        uint winningCount = 0;
+        for (uint i = 0; i < proposals.length; i++) {
+            if (proposals[i].voteCount > winningCount) {
+                winningCount = proposals[i].voteCount;
+                winningProposalId = i;
+            }
+        }
+        
+        workflowstatus = WorkflowStatus.VotesTallied;
+        emit WorkflowStatusChange(WorkflowStatus.VotingSessionEnded, WorkflowStatus.VotesTallied);
+    }
+
+    function getWinner() external view returns (uint) {
+        require(workflowstatus == WorkflowStatus.VotesTallied, "Votes didn't get counted");
         return winningProposalId;
     }
 }
