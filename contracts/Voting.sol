@@ -122,6 +122,7 @@ contract Voting {
 
         voters[msg.sender].hasVoted = true;
         voters[msg.sender].votedProposalId = _proposalId;
+        proposals[_proposalId].voteCount++;
         emit Voted(msg.sender, _proposalId);
     }
 
