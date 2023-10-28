@@ -26,6 +26,7 @@ contract Voting {
     } // Différents états d'un vote
 
     event VoterRegistered(address voterAddress);
+    event VoterRemoved(address voterAddress);
     event WorkflowStatusChange(WorkflowStatus previousStatus, WorkflowStatus newStatus);
     event ProposalRegistered(uint proposalId);
     event Voted(address voter, uint proposalId);
@@ -42,74 +43,59 @@ contract Voting {
         workflowstatus = WorkflowStatus.RegisteringVoters;
     }
 
-    function registerVoter(address _addressOfVoter) public {
+    // Modifiers
+
+    modifier isOwner() {
         require(msg.sender == owner, "You don't have the permission to do that");
+        _;
+    }
+
+    modifier isRegistered() {
+        require(voters[msg.sender].isRegistered, "You are not a registered voter");
+        _;
+    }
+
+    modifier isStatus(WorkflowStatus status, string memory errorMessage) {
+        require(workflowstatus == status, errorMessage);
+        _;
+    }
+
+    // Owner actions
+
+    function registerVoter(address _addressOfVoter) public isOwner {
         require(!voters[_addressOfVoter].isRegistered, "User already registered");
         voters[_addressOfVoter].isRegistered = true;
         emit VoterRegistered(_addressOfVoter);
     }
 
-    // Start/Stop sessions (owner only)
+    function unregisterVoter(address _voterAddress) external isOwner {
+        require(voters[_voterAddress].isRegistered, "This voter is not registered");
+        delete voters[_voterAddress];
+        emit VoterRemoved(_voterAddress);
+    }
 
-    function startProposalRegisterSession() public {
-        require(msg.sender == owner, "You don't have the permission to do that");
+    function startProposalRegisterSession() public isOwner {
         emit WorkflowStatusChange(workflowstatus, WorkflowStatus.ProposalsRegistrationStarted);
 
         workflowstatus = WorkflowStatus.ProposalsRegistrationStarted;
     }
 
-    function endProposalRegisterSession() public {
-        require(msg.sender == owner, "You don't have the permission to do that");
-        require(workflowstatus == WorkflowStatus.ProposalsRegistrationStarted, "Proposal register session is not open");
-
+    function endProposalRegisterSession() public isOwner isStatus(WorkflowStatus.ProposalsRegistrationStarted, "Proposal register session is not open") {
         workflowstatus = WorkflowStatus.ProposalsRegistrationEnded;
         emit WorkflowStatusChange(WorkflowStatus.ProposalsRegistrationStarted, WorkflowStatus.ProposalsRegistrationEnded);
     }
 
-    function startVoteSession() public {
-        require(msg.sender == owner, "You don't have the permission to do that");
-        require(workflowstatus == WorkflowStatus.ProposalsRegistrationEnded, "Proposal register session is not closed");
-
+    function startVoteSession() public isOwner isStatus(WorkflowStatus.ProposalsRegistrationEnded, "Proposal register session is not closed") {
         workflowstatus = WorkflowStatus.VotingSessionStarted;
         emit WorkflowStatusChange(WorkflowStatus.ProposalsRegistrationEnded, WorkflowStatus.VotingSessionStarted);
     }
 
-    function endVoteSession() public {
-        require(msg.sender == owner, "You don't have the permission to do that");
-        require(workflowstatus == WorkflowStatus.VotingSessionStarted, "Vote session is not opened");
-
+    function endVoteSession() public isOwner isStatus(WorkflowStatus.VotingSessionStarted, "Vote session is not open") {
         workflowstatus = WorkflowStatus.VotingSessionEnded;
         emit WorkflowStatusChange(WorkflowStatus.VotingSessionStarted, WorkflowStatus.VotingSessionEnded);
     }
 
-    // Proposal/Voting (registered users)
-
-    function registerProposal(string memory _description) public {
-        require(voters[msg.sender].isRegistered, "You are not a registered user");
-        require(workflowstatus == WorkflowStatus.ProposalsRegistrationStarted, "Proposal register session is not open");
-
-        uint proposalId = proposals.length;
-        proposals.push(Proposal(_description, 0));
-        emit ProposalRegistered(proposalId);
-    }
-
-    function vote(uint _proposalId) public {
-        require(voters[msg.sender].isRegistered, "You are not a registered user");
-        require(workflowstatus == WorkflowStatus.VotingSessionStarted, "Voting session is not open");
-        require(!voters[msg.sender].hasVoted, "You already voted");
-        require(_proposalId < proposals.length, "This proposal doesn't exists");
-
-        voters[msg.sender].hasVoted = true;
-        voters[msg.sender].votedProposalId = _proposalId;
-        emit Voted(msg.sender, _proposalId);
-    }
-
-    // Count votes
-
-    function tallyVotes() external {
-        require(msg.sender == owner, "You don't have the permission to do that");
-        require(workflowstatus == WorkflowStatus.VotingSessionEnded, "Vote session is not closed");
-
+    function tallyVotes() external isOwner isStatus(WorkflowStatus.VotingSessionEnded, "Vote session is not closed") {
         uint winningCount = 0;
         for (uint i = 0; i < proposals.length; i++) {
             if (proposals[i].voteCount > winningCount) {
@@ -122,8 +108,36 @@ contract Voting {
         emit WorkflowStatusChange(WorkflowStatus.VotingSessionEnded, WorkflowStatus.VotesTallied);
     }
 
-    function getWinner() external view returns (uint) {
-        require(workflowstatus == WorkflowStatus.VotesTallied, "Votes didn't get counted");
+    // Voters actions
+
+    function registerProposal(string memory _description) public isRegistered isStatus(WorkflowStatus.ProposalsRegistrationStarted, "Proposal register session is not open") {
+        uint proposalId = proposals.length;
+        proposals.push(Proposal(_description, 0));
+        emit ProposalRegistered(proposalId);
+    }
+
+    function vote(uint _proposalId) public isRegistered isStatus(WorkflowStatus.VotingSessionStarted, "Voting session is not open") {
+        require(!voters[msg.sender].hasVoted, "You already voted");
+        require(_proposalId < proposals.length, "This proposal doesn't exist");
+
+        voters[msg.sender].hasVoted = true;
+        voters[msg.sender].votedProposalId = _proposalId;
+        emit Voted(msg.sender, _proposalId);
+    }
+
+    // All access
+
+    function getWinner() external view isStatus(WorkflowStatus.VotesTallied, "Votes didn't get counted") returns (uint) {
         return winningProposalId;
+    }
+
+    function viewProposal(uint _proposalId) external view returns (string memory) {
+        require(_proposalId < proposals.length, "The proposal doesn't exist");
+        return proposals[_proposalId].description;
+    }
+
+    function viewProposals() external view returns (Proposal[] memory) {
+        require(proposals.length > 0, "There is no proposal");
+        return proposals;
     }
 }
